@@ -37,6 +37,9 @@
 #include "port/hooks/list/PlayerEvent.h"
 #include "port/mods/PortEnhancements.h"
 
+#include "titanfall/tf_movement.h"
+#include "titanfall/tf_camera.h"
+
 u32 unused80339F10;
 u8 unused80339F1C[20];
 
@@ -1715,6 +1718,7 @@ s32 execute_mario_action(UNUSED struct Object *o) {
         gMarioState->marioObj->header.gfx.node.flags &= ~GRAPH_RENDER_INVISIBLE;
         mario_reset_bodystate(gMarioState);
         update_mario_inputs(gMarioState);
+
         mario_handle_special_floors(gMarioState);
         mario_process_interactions(gMarioState);
 
@@ -1723,39 +1727,54 @@ s32 execute_mario_action(UNUSED struct Object *o) {
             return 0;
         }
 
-        // The function can loop through many action shifts in one frame,
-        // which can lead to unexpected sub-frame behavior. Could potentially hang
-        // if a loop of actions were found, but there has not been a situation found.
-        while (inLoop) {
-            switch (gMarioState->action & ACT_GROUP_MASK) {
-                case ACT_GROUP_STATIONARY:
-                    inLoop = mario_execute_stationary_action(gMarioState);
-                    break;
+        /*
+         * TITANFALL64: bypass vanilla action dispatch.
+         * tf_movement_update handles ground, air, slide, wallrun, camera, and animation.
+         * We still let cutscene, automatic, submerged, and object actions run vanilla
+         * so that star grabs, door transitions, swimming, etc. still work.
+         */
+        {
+            u32 actionGroup = gMarioState->action & ACT_GROUP_MASK;
 
-                case ACT_GROUP_MOVING:
-                    inLoop = mario_execute_moving_action(gMarioState);
-                    break;
-
-                case ACT_GROUP_AIRBORNE:
-                    inLoop = mario_execute_airborne_action(gMarioState);
-                    break;
-
-                case ACT_GROUP_SUBMERGED:
-                    inLoop = mario_execute_submerged_action(gMarioState);
-                    break;
-
-                case ACT_GROUP_CUTSCENE:
-                    inLoop = mario_execute_cutscene_action(gMarioState);
-                    break;
-
-                case ACT_GROUP_AUTOMATIC:
-                    inLoop = mario_execute_automatic_action(gMarioState);
-                    break;
-
-                case ACT_GROUP_OBJECT:
-                    inLoop = mario_execute_object_action(gMarioState);
-                    break;
+            if (actionGroup == ACT_GROUP_CUTSCENE
+                || actionGroup == ACT_GROUP_AUTOMATIC
+                || actionGroup == ACT_GROUP_SUBMERGED
+                || actionGroup == ACT_GROUP_OBJECT) {
+                /* Let vanilla handle these */
+                while (inLoop) {
+                    switch (gMarioState->action & ACT_GROUP_MASK) {
+                        case ACT_GROUP_STATIONARY:
+                            inLoop = mario_execute_stationary_action(gMarioState);
+                            break;
+                        case ACT_GROUP_MOVING:
+                            inLoop = mario_execute_moving_action(gMarioState);
+                            break;
+                        case ACT_GROUP_AIRBORNE:
+                            inLoop = mario_execute_airborne_action(gMarioState);
+                            break;
+                        case ACT_GROUP_SUBMERGED:
+                            inLoop = mario_execute_submerged_action(gMarioState);
+                            break;
+                        case ACT_GROUP_CUTSCENE:
+                            inLoop = mario_execute_cutscene_action(gMarioState);
+                            break;
+                        case ACT_GROUP_AUTOMATIC:
+                            inLoop = mario_execute_automatic_action(gMarioState);
+                            break;
+                        case ACT_GROUP_OBJECT:
+                            inLoop = mario_execute_object_action(gMarioState);
+                            break;
+                    }
+                }
+            } else {
+                /* Titanfall movement replaces stationary, moving, and airborne groups */
+                tf_movement_update(gMarioState);
             }
+        }
+
+        /* Titanfall64: floor can become NULL after movement pushes Mario OOB */
+        if (gMarioState->floor == NULL) {
+            return gMarioState->particleFlags;
         }
 
         sink_mario_in_quicksand(gMarioState);
@@ -1878,6 +1897,10 @@ void init_mario(void) {
 
         capObject->oMoveAngleYaw = 0;
     }
+
+    /* Titanfall64: initialize movement state and capture mouse */
+    tf_movement_init();
+    tf_camera_set_capture(1);
 }
 
 void init_mario_from_save_file(void) {

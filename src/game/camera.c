@@ -29,6 +29,7 @@
 #include "engine/graph_node.h"
 #include "level_table.h"
 #include "port/interpolation/FrameInterpolation.h"
+#include "titanfall/tf_movement.h"
 
 #define CBUTTON_MASK (U_CBUTTONS | D_CBUTTONS | L_CBUTTONS | R_CBUTTONS)
 
@@ -3194,6 +3195,27 @@ void update_camera(struct Camera *c) {
     }
 
     update_lakitu(c);
+
+    /*
+     * TITANFALL64: override lakitu render state with our camera.
+     * Only do this when camera has been initialized (captured == active gameplay).
+     * Skip during title screen, file select, cutscenes where camera is (0,0,0).
+     */
+    if (gTFState.camera.captured) {
+        gLakituState.pos[0]      = gTFState.camera.pos[0];
+        gLakituState.pos[1]      = gTFState.camera.pos[1];
+        gLakituState.pos[2]      = gTFState.camera.pos[2];
+        gLakituState.focus[0]    = gTFState.camera.focus[0];
+        gLakituState.focus[1]    = gTFState.camera.focus[1];
+        gLakituState.focus[2]    = gTFState.camera.focus[2];
+        gLakituState.curPos[0]   = gTFState.camera.pos[0];
+        gLakituState.curPos[1]   = gTFState.camera.pos[1];
+        gLakituState.curPos[2]   = gTFState.camera.pos[2];
+        gLakituState.curFocus[0] = gTFState.camera.focus[0];
+        gLakituState.curFocus[1] = gTFState.camera.focus[1];
+        gLakituState.curFocus[2] = gTFState.camera.focus[2];
+        gLakituState.roll = (s16)(gTFState.camera.roll / 360.0f * 65536.0f);
+    }
 
     gLakituState.lastFrameAction = sMarioCamState->action;
 }
