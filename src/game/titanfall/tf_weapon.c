@@ -45,33 +45,33 @@ static struct TfProjectile *tf_alloc_projectile(void) {
 /* ── Check if projectile hits any enemy ─────────────────────────── */
 
 static void tf_projectile_check_enemy_hits(struct TfProjectile *p) {
-    /*
-     * Iterate the GENACTOR list (where goombas, bob-ombs, etc. live)
-     * and DESTRUCTIVE list (breakable boxes, etc.).
-     * If an enemy is within hit radius, set its oInteractStatus to
-     * "was attacked" — this is what the enemy's behavior checks.
-     */
+    if (gObjectLists == NULL) return;
+
     for (s32 listIdx = 0; listIdx < 2; listIdx++) {
         s32 list = (listIdx == 0) ? OBJ_LIST_GENACTOR : OBJ_LIST_DESTRUCTIVE;
-        struct ObjectNode *node = &gObjectLists[list];
-        struct Object *obj = (struct Object *)node->next;
+        struct ObjectNode *listHead = &gObjectLists[list];
+        if (listHead == NULL) continue;
 
-        while (obj != (struct Object *)node) {
-            struct Object *next = (struct Object *)obj->header.next;
+        struct ObjectNode *node = listHead->next;
+        s32 safety = 0;
 
-            if (obj->activeFlags != 0 && obj != gMarioObject) {
+        while (node != listHead && safety < 256) {
+            safety++;
+            struct Object *obj = (struct Object *)node;
+            struct ObjectNode *next = node->next;
+
+            if (obj != NULL && obj->activeFlags != 0
+                && (struct Object *)obj != gMarioObject) {
                 f32 dx = p->pos[0] - obj->oPosX;
                 f32 dy = p->pos[1] - obj->oPosY;
                 f32 dz = p->pos[2] - obj->oPosZ;
-                f32 dist = dx * dx + dy * dy + dz * dz;
+                f32 distSq = dx * dx + dy * dy + dz * dz;
 
-                if (dist < TF_PROJ_HIT_RADIUS * TF_PROJ_HIT_RADIUS) {
-                    /* Hit! Mark enemy as attacked (same as punch/kick) */
+                if (distSq < TF_PROJ_HIT_RADIUS * TF_PROJ_HIT_RADIUS) {
                     obj->oInteractStatus |= INT_STATUS_WAS_ATTACKED
                                           | INT_STATUS_INTERACTED
                                           | ATTACK_PUNCH;
 
-                    /* Kill the projectile on hit */
                     if (p->obj != NULL) {
                         obj_mark_for_deletion(p->obj);
                     }
@@ -81,7 +81,7 @@ static void tf_projectile_check_enemy_hits(struct TfProjectile *p) {
                 }
             }
 
-            obj = next;
+            node = next;
         }
     }
 }
@@ -133,7 +133,8 @@ static void tf_update_projectiles(void) {
 
             f32 scale = TF_WEAPON_SCALE;
             if (p->timer < 3) scale *= (f32)p->timer / 3.0f;
-            cur_obj_scale(scale);
+            /* Don't use cur_obj_scale — it needs gCurrentObject set.
+             * Set scale directly on the graphics node. */
             p->obj->header.gfx.scale[0] = scale;
             p->obj->header.gfx.scale[1] = scale;
             p->obj->header.gfx.scale[2] = scale;
