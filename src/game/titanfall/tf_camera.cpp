@@ -42,6 +42,12 @@ static void tf_read_mouse_delta(f32 *dx, f32 *dy) {
     *dy = (f32)coords.y;
 }
 
+static bool tf_read_mouse_button(int btn) {
+    auto window = Ship::Context::GetInstance()->GetWindow();
+    if (window == nullptr) return false;
+    return window->GetMouseState((Ship::MouseBtn)btn);
+}
+
 static void tf_mouse_capture(bool capture) {
     auto window = Ship::Context::GetInstance()->GetWindow();
     if (window != nullptr) {
@@ -179,8 +185,15 @@ extern "C" void tf_camera_update(struct MarioState *m, f32 dt) {
         m->area->camera->yaw = yawS16;
     }
 
-    /* Override FOV — SM64 default is 45°, we want wider for TPS action feel */
+    /* Override FOV */
     sFOVState.fov = TF_CAM_FOV;
+
+    /* ── Mouse button state (for weapon) ──────────────── */
+    {
+        u8 wasDown = gTFState.mouseDown;
+        gTFState.mouseDown = tf_read_mouse_button(0) ? 1 : 0;  /* 0 = LUS_MOUSE_BTN_LEFT */
+        gTFState.mousePressed = (!wasDown && gTFState.mouseDown) ? 1 : 0;
+    }
 }
 
 /* ── Mouse capture toggle ───────────────────────────────────────── */

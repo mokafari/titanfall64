@@ -69,6 +69,13 @@ extern "C" {
 #define TF_CAM_HEIGHT         120.0f   /* height offset from player origin     */
 #define TF_CAM_FOV             75.0f   /* field of view in degrees (SM64=45)   */
 #define TF_CAM_WALLRUN_ROLL    5.0f   /* camera roll during wallrun (degrees) */
+
+/* ── Weapon (L-STAR style) ──────────────────────────────────────── */
+#define TF_WEAPON_COOLDOWN     4      /* frames between shots (7.5 rps)       */
+#define TF_WEAPON_SPEED       60.0f   /* projectile speed (units/frame)       */
+#define TF_WEAPON_LIFETIME    60      /* frames before despawn (~2s)          */
+#define TF_WEAPON_SCALE        4.0f   /* projectile visual size               */
+#define TF_WEAPON_SPAWN_FWD   50.0f   /* spawn distance in front of Mario     */
 #define TF_CAM_ROLL_LERP       0.15f  /* roll interpolation speed             */
 
 /* ── State structs ──────────────────────────────────────────────── */
@@ -110,6 +117,9 @@ struct TFPlayerState {
     u8 canDoubleJump;
     u8 jumpsAvailable;    /* 2 = fresh, 1 = used one, 0 = spent   */
     u8 wallKickTimer;     /* frames since wall-kick (for animation)*/
+    u8 shootCooldown;     /* frames until next shot allowed        */
+    u8 mouseDown;         /* is left mouse button held             */
+    u8 mousePressed;      /* left mouse just pressed this frame    */
     f32 lastGroundSpeed;  /* speed when last grounded              */
 };
 
@@ -136,6 +146,10 @@ void tf_slide_jump(struct MarioState *m, struct SlideState *sl);
 void tf_slide_exit(struct MarioState *m, struct SlideState *sl);
 
 /* Wallrun */
+/* Weapon */
+void tf_weapon_update(struct MarioState *m);
+void tf_projectile_update(void);
+
 s32  tf_try_wallrun_attach(struct MarioState *m, struct WallrunState *wr);
 void tf_update_wallrun(struct MarioState *m, struct WallrunState *wr, f32 dt);
 void tf_wallrun_jump(struct MarioState *m, struct WallrunState *wr);

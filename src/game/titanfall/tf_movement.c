@@ -419,4 +419,7 @@ post_movement:
 
     /* ── Camera ───────────────────────────────────────── */
     tf_camera_update(m, dt);
+
+    /* ── Weapon ───────────────────────────────────────── */
+    tf_weapon_update(m);
 }
