@@ -71,9 +71,16 @@ void tf_update_slide(struct MarioState *m, struct SlideState *sl, f32 dt) {
         return;
     }
 
-    /* Low friction */
+    /* Friction ramps up over time — snappy start, decelerating tail */
     if (hspeed > 0.1f) {
-        f32 drop = hspeed * TF_SLIDE_FRICTION * dt;
+        f32 friction = TF_SLIDE_FRICTION;
+        if (sl->timer > 30) {
+            /* After 1 second, friction ramps from 0.3 → 3.0 over the next second */
+            f32 t = (f32)(sl->timer - 30) / 30.0f;
+            if (t > 1.0f) t = 1.0f;
+            friction = TF_SLIDE_FRICTION + (3.0f - TF_SLIDE_FRICTION) * t;
+        }
+        f32 drop = hspeed * friction * dt;
         f32 newspeed = hspeed - drop;
         if (newspeed < 0.0f) newspeed = 0.0f;
         f32 scale = newspeed / hspeed;

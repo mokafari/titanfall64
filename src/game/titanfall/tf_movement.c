@@ -12,6 +12,7 @@
 #include "engine/math_util.h"
 #include "game/mario.h"
 #include "game/mario_step.h"
+#include "engine/surface_collision.h"
 #include "game/interaction.h"
 #include "game/titanfall/tf_movement.h"
 #include "game/titanfall/tf_math.h"
@@ -312,6 +313,16 @@ void tf_movement_update(struct MarioState *m) {
     }
 
 post_movement:
+    /* ── Safety: re-check floor after movement stepped ── */
+    if (m->floor == NULL) {
+        /* OOB — try to recover by finding floor at current position */
+        m->floorHeight = find_floor(m->pos[0], m->pos[1], m->pos[2], &m->floor);
+        if (m->floor == NULL) {
+            /* Truly OOB — bail, let vanilla handle recovery */
+            return;
+        }
+    }
+
     /* ── Track state ──────────────────────────────────── */
     sWasAirborne = !onGround && !gTFState.slide.active;
 
@@ -323,35 +334,72 @@ post_movement:
 
     /* ── Sync graphics ────────────────────────────────── */
     vec3f_copy(m->marioObj->header.gfx.pos, m->pos);
-    vec3s_set(m->marioObj->header.gfx.angle, 0, m->faceAngle[1], 0);
 
-    /* ── Animation (context-aware) ────────────────────── */
+    /* Body tilt: during wallrun, tilt Mario toward the wall (roll)
+     * gfx.angle is (pitch, yaw, roll) in s16 units */
+    {
+        s16 bodyRoll = 0;
+        s16 bodyPitch = 0;
+
+        if (gTFState.wallrun.active) {
+            /* Tilt ~30° toward wall — side 0 = wall on left → lean left */
+            s16 wallTilt = (s16)(30.0f / 360.0f * 65536.0f);
+            bodyRoll = (gTFState.wallrun.side == 0) ? wallTilt : -wallTilt;
+        } else if (sDiving) {
+            /* Pitch forward during dive */
+            bodyPitch = (s16)(-25.0f / 360.0f * 65536.0f);
+        } else if (sGroundPounding && sGroundPoundTimer >= 5) {
+            /* Tuck during ground pound slam */
+            bodyPitch = (s16)(15.0f / 360.0f * 65536.0f);
+        }
+
+        vec3s_set(m->marioObj->header.gfx.angle, bodyPitch, m->faceAngle[1], bodyRoll);
+    }
+
+    /* ── Animation (context-aware, dynamic) ───────────── */
     {
         f32 hspeed = vec3f_magnitude_xz(m->vel);
 
         if (sGroundPounding) {
             if (sGroundPoundTimer < 5) {
-                set_mario_animation(m, MARIO_ANIM_GROUND_POUND);
+                set_mario_animation(m, MARIO_ANIM_START_GROUND_POUND);
             } else {
                 set_mario_animation(m, MARIO_ANIM_GROUND_POUND);
             }
         } else if (sDiving) {
             set_mario_animation(m, MARIO_ANIM_DIVE);
         } else if (gTFState.slide.active) {
-            set_mario_animation(m, MARIO_ANIM_CROUCHING);
+            /* Feet-first slide kick looks more dynamic than crouch */
+            set_mario_animation(m, MARIO_ANIM_SLIDE_KICK);
         } else if (gTFState.wallrun.active) {
-            /* Running on wall */
+            /* Running animation on the wall — body tilt handles the visual */
             set_mario_animation(m, MARIO_ANIM_RUNNING);
+        } else if (gTFState.wallKickTimer > 8) {
+            /* Wall-kick initial launch — dramatic kick pose */
+            set_mario_animation(m, MARIO_ANIM_START_WALLKICK);
         } else if (gTFState.wallKickTimer > 0) {
-            /* Wall-kick launch animation */
+            /* Wall-kick flight */
             set_mario_animation(m, MARIO_ANIM_SLIDEJUMP);
-        } else if (!onGround && m->vel[1] > 15.0f) {
+        } else if (!onGround && m->vel[1] > 30.0f) {
+            /* Strong upward — jump rise */
             set_mario_animation(m, MARIO_ANIM_SINGLE_JUMP);
+        } else if (!onGround && m->vel[1] > 10.0f) {
+            /* Double jump rise — twirl */
+            set_mario_animation(m, MARIO_ANIM_DOUBLE_JUMP_RISE);
+        } else if (!onGround && m->vel[1] > -10.0f) {
+            /* Apex — brief hang */
+            set_mario_animation(m, MARIO_ANIM_DOUBLE_JUMP_FALL);
         } else if (!onGround) {
+            /* Falling */
             set_mario_animation(m, MARIO_ANIM_GENERAL_FALL);
-        } else if (hspeed > 16.0f) {
+        } else if (hspeed > 32.0f) {
+            /* Sprint */
             set_mario_animation(m, MARIO_ANIM_RUNNING);
+        } else if (hspeed > 10.0f) {
+            /* Jog */
+            set_mario_animation(m, MARIO_ANIM_WALKING);
         } else if (hspeed > 2.0f) {
+            /* Walk */
             set_mario_animation(m, MARIO_ANIM_TIPTOE);
         } else {
             set_mario_animation(m, MARIO_ANIM_IDLE_HEAD_CENTER);

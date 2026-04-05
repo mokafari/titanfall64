@@ -19,7 +19,7 @@ extern "C" {
 #define TF_DT                 (1.0f / TF_TICKRATE)
 
 /* ── Ground Movement ────────────────────────────────────────────── */
-#define TF_GROUND_MAXSPEED    48.0f   /* sprint speed (Mario's run is ~32)    */
+#define TF_GROUND_MAXSPEED    38.0f   /* sprint speed (tad slower, was 48)    */
 #define TF_GROUND_ACCEL       10.0f
 #define TF_GROUND_FRICTION     6.0f
 
@@ -39,7 +39,7 @@ extern "C" {
 #define TF_SLIDE_MIN_SPEED    20.0f   /* minimum speed to start slide         */
 #define TF_SLIDE_BOOST         8.0f   /* speed added on entry                 */
 #define TF_SLIDE_FRICTION      0.3f   /* very low (ground = 6.0)              */
-#define TF_SLIDE_SLOPE_ACCEL 1200.0f  /* downhill acceleration — feel the hill */
+#define TF_SLIDE_SLOPE_ACCEL  600.0f  /* downhill acceleration (halved from 1200) */
 #define TF_SLIDE_SLOPE_DECEL  300.0f  /* uphill deceleration                   */
 #define TF_SLIDE_MAX_SPEED   150.0f   /* high cap — slopes should go fast     */
 #define TF_SLIDE_DURATION_MAX  90     /* max frames (~3 sec at 30hz)          */
@@ -63,7 +63,7 @@ extern "C" {
 #define TF_WR_ENTRY_UPKICK    12.0f   /* upward bump on attach                */
 
 /* ── Camera ─────────────────────────────────────────────────────── */
-#define TF_CAM_SENSITIVITY     2.5f   /* mouselook sensitivity                */
+#define TF_CAM_SENSITIVITY     1.8f   /* mouselook sensitivity (lowered)      */
 #define TF_CAM_PITCH_MAX      85.0f   /* degrees, prevent gimbal flip         */
 #define TF_CAM_DISTANCE      700.0f   /* TPS distance behind player (0=FPS)   */
 #define TF_CAM_HEIGHT         120.0f   /* height offset from player origin     */
