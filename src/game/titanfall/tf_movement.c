@@ -335,75 +335,67 @@ post_movement:
     /* ── Sync graphics ────────────────────────────────── */
     vec3f_copy(m->marioObj->header.gfx.pos, m->pos);
 
-    /* Body tilt: during wallrun, tilt Mario toward the wall (roll)
-     * gfx.angle is (pitch, yaw, roll) in s16 units */
+    /*
+     * ── Body tilt & Animation ────────────────────────────
+     * Parkour feel: dynamic body angles + context-aware animations.
+     * Body tilts into movement direction at high speed for momentum feel.
+     */
     {
+        f32 hspeed = vec3f_magnitude_xz(m->vel);
         s16 bodyRoll = 0;
         s16 bodyPitch = 0;
 
         if (gTFState.wallrun.active) {
-            /* Tilt ~30° toward wall — side 0 = wall on left → lean left */
-            s16 wallTilt = (s16)(30.0f / 360.0f * 65536.0f);
+            /* 45° lean into wall — feet on wall, body angled */
+            s16 wallTilt = (s16)(45.0f / 360.0f * 65536.0f);
             bodyRoll = (gTFState.wallrun.side == 0) ? wallTilt : -wallTilt;
+            set_mario_animation(m, MARIO_ANIM_RUNNING);
         } else if (sDiving) {
-            /* Pitch forward during dive */
-            bodyPitch = (s16)(-25.0f / 360.0f * 65536.0f);
-        } else if (sGroundPounding && sGroundPoundTimer >= 5) {
-            /* Tuck during ground pound slam */
-            bodyPitch = (s16)(15.0f / 360.0f * 65536.0f);
-        }
-
-        vec3s_set(m->marioObj->header.gfx.angle, bodyPitch, m->faceAngle[1], bodyRoll);
-    }
-
-    /* ── Animation (context-aware, dynamic) ───────────── */
-    {
-        f32 hspeed = vec3f_magnitude_xz(m->vel);
-
-        if (sGroundPounding) {
+            bodyPitch = (s16)(-30.0f / 360.0f * 65536.0f);
+            set_mario_animation(m, MARIO_ANIM_DIVE);
+        } else if (sGroundPounding) {
             if (sGroundPoundTimer < 5) {
                 set_mario_animation(m, MARIO_ANIM_START_GROUND_POUND);
             } else {
+                bodyPitch = (s16)(20.0f / 360.0f * 65536.0f);
                 set_mario_animation(m, MARIO_ANIM_GROUND_POUND);
             }
-        } else if (sDiving) {
-            set_mario_animation(m, MARIO_ANIM_DIVE);
         } else if (gTFState.slide.active) {
-            /* Feet-first slide kick looks more dynamic than crouch */
+            /* Low slide — pitch forward slightly for speed feel */
+            bodyPitch = (s16)(-8.0f / 360.0f * 65536.0f);
             set_mario_animation(m, MARIO_ANIM_SLIDE_KICK);
-        } else if (gTFState.wallrun.active) {
-            /* Running animation on the wall — body tilt handles the visual */
-            set_mario_animation(m, MARIO_ANIM_RUNNING);
         } else if (gTFState.wallKickTimer > 8) {
-            /* Wall-kick initial launch — dramatic kick pose */
             set_mario_animation(m, MARIO_ANIM_START_WALLKICK);
         } else if (gTFState.wallKickTimer > 0) {
-            /* Wall-kick flight */
-            set_mario_animation(m, MARIO_ANIM_SLIDEJUMP);
-        } else if (!onGround && m->vel[1] > 30.0f) {
-            /* Strong upward — jump rise */
+            set_mario_animation(m, MARIO_ANIM_FORWARD_SPINNING_FLIP);
+        } else if (!onGround && m->vel[1] > 25.0f) {
+            /* Fast rise — flip */
+            set_mario_animation(m, MARIO_ANIM_FORWARD_SPINNING_FLIP);
+        } else if (!onGround && m->vel[1] > 5.0f) {
+            /* Rising */
             set_mario_animation(m, MARIO_ANIM_SINGLE_JUMP);
-        } else if (!onGround && m->vel[1] > 10.0f) {
-            /* Double jump rise — twirl */
-            set_mario_animation(m, MARIO_ANIM_DOUBLE_JUMP_RISE);
-        } else if (!onGround && m->vel[1] > -10.0f) {
-            /* Apex — brief hang */
+        } else if (!onGround && m->vel[1] > -15.0f) {
+            /* Apex float */
             set_mario_animation(m, MARIO_ANIM_DOUBLE_JUMP_FALL);
+        } else if (!onGround && hspeed > 30.0f) {
+            /* Fast falling with momentum — airborne on stomach (superman) */
+            set_mario_animation(m, MARIO_ANIM_AIRBORNE_ON_STOMACH);
+            bodyPitch = (s16)(-15.0f / 360.0f * 65536.0f);
         } else if (!onGround) {
-            /* Falling */
             set_mario_animation(m, MARIO_ANIM_GENERAL_FALL);
         } else if (hspeed > 32.0f) {
-            /* Sprint */
+            /* Sprint — lean forward */
+            bodyPitch = (s16)(-6.0f / 360.0f * 65536.0f);
             set_mario_animation(m, MARIO_ANIM_RUNNING);
         } else if (hspeed > 10.0f) {
-            /* Jog */
-            set_mario_animation(m, MARIO_ANIM_WALKING);
+            set_mario_animation(m, MARIO_ANIM_RUNNING);
         } else if (hspeed > 2.0f) {
-            /* Walk */
             set_mario_animation(m, MARIO_ANIM_TIPTOE);
         } else {
             set_mario_animation(m, MARIO_ANIM_IDLE_HEAD_CENTER);
         }
+
+        vec3s_set(m->marioObj->header.gfx.angle, bodyPitch, m->faceAngle[1], bodyRoll);
     }
 
     /* ── Speed particles ──────────────────────────────── */
