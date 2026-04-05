@@ -1736,10 +1736,20 @@ s32 execute_mario_action(UNUSED struct Object *o) {
         {
             u32 actionGroup = gMarioState->action & ACT_GROUP_MASK;
 
-            if (actionGroup == ACT_GROUP_CUTSCENE
+            /*
+             * Fall through to vanilla for: cutscenes, automatic, submerged, object actions,
+             * AND any action involving riding shells, holding objects, or special flags
+             * that vanilla action handlers need to manage.
+             */
+            u8 needsVanilla = (actionGroup == ACT_GROUP_CUTSCENE
                 || actionGroup == ACT_GROUP_AUTOMATIC
                 || actionGroup == ACT_GROUP_SUBMERGED
-                || actionGroup == ACT_GROUP_OBJECT) {
+                || actionGroup == ACT_GROUP_OBJECT
+                || (gMarioState->action & ACT_FLAG_RIDING_SHELL)
+                || gMarioState->riddenObj != NULL
+                || gMarioState->heldObj != NULL);
+
+            if (needsVanilla) {
                 /* Let vanilla handle these */
                 while (inLoop) {
                     switch (gMarioState->action & ACT_GROUP_MASK) {
