@@ -160,7 +160,7 @@ static void tf_fire_projectile(struct MarioState *m) {
     s16 pitchS16 = (s16)(gTFState.camera.pitch / 360.0f * 65536.0f);
 
     f32 dirX = coss(pitchS16) * sins(yawS16);
-    f32 dirY = sins(pitchS16);
+    f32 dirY = -sins(pitchS16);  /* negated: positive pitch = camera above, looking down */
     f32 dirZ = coss(pitchS16) * coss(yawS16);
 
     p->pos[0] = m->pos[0] + dirX * TF_WEAPON_SPAWN_FWD;
@@ -182,6 +182,9 @@ static void tf_fire_projectile(struct MarioState *m) {
         p->obj->header.gfx.scale[0] = TF_WEAPON_SCALE;
         p->obj->header.gfx.scale[1] = TF_WEAPON_SCALE;
         p->obj->header.gfx.scale[2] = TF_WEAPON_SCALE;
+        /* Disable SM64's built-in flame interaction so it doesn't
+         * burn Mario or conflict with our manual damage */
+        p->obj->oInteractType = 0;
     }
 
     play_sound(SOUND_OBJ_FLAME_BLOWN, m->marioObj->header.gfx.cameraToObject);
