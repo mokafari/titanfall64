@@ -83,7 +83,53 @@ extern "C" {
 #define TF_WEAPON_SPAWN_FWD   50.0f   /* spawn distance in front of Mario     */
 #define TF_CAM_ROLL_LERP       0.15f  /* roll interpolation speed             */
 
+/* ── Mantle ─────────────────────────────────────────────────────── */
+#define TF_MANTLE_CHECK_HEIGHT   120.0f
+#define TF_MANTLE_MIN_HEIGHT      40.0f
+#define TF_MANTLE_MAX_HEIGHT     180.0f
+#define TF_MANTLE_FORWARD_CHECK   30.0f
+#define TF_MANTLE_DURATION        10
+#define TF_MANTLE_SPEED_PRESERVE   0.85f
+#define TF_MANTLE_VERTICAL_BOOST  20.0f
+#define TF_MANTLE_COOLDOWN         8
+
+/* ── Grapple ───────────────────────────────────────────────────── */
+#define TF_GRAPPLE_MAX_RANGE    2000.0f
+#define TF_GRAPPLE_PULL_FORCE     18.0f
+#define TF_GRAPPLE_MIN_DIST       80.0f
+#define TF_GRAPPLE_MAX_DURATION   90
+#define TF_GRAPPLE_SPEED_CAP    120.0f
+#define TF_GRAPPLE_COOLDOWN       30
+#define TF_GRAPPLE_VERTICAL_BIAS   0.3f
+#define TF_GRAPPLE_DETACH_BOOST    1.1f
+
+/* ── Perfect Bhop ──────────────────────────────────────────────── */
+#define TF_BHOP_PERFECT_WINDOW    3
+#define TF_BHOP_SPEED_BONUS       1.05f
+#define TF_BHOP_GOOD_WINDOW       6
+#define TF_BHOP_FLASH_DURATION    8
+#define TF_BHOP_STREAK_BONUS      0.01f
+#define TF_BHOP_MAX_STREAK_BONUS  0.05f
+
 /* ── State structs ──────────────────────────────────────────────── */
+
+struct MantleState {
+    u8 active;
+    s16 timer;
+    s16 cooldown;
+    Vec3f targetPos;
+    Vec3f startPos;
+    f32 preservedSpeedX;
+    f32 preservedSpeedZ;
+};
+
+struct GrappleState {
+    u8 active;
+    s16 timer;
+    s16 cooldown;
+    Vec3f targetPos;
+    f32 ropeLength;
+};
 
 struct WallrunState {
     u8 active;
@@ -116,6 +162,8 @@ struct TFCamera {
 struct TFPlayerState {
     struct WallrunState wallrun;
     struct SlideState slide;
+    struct MantleState mantle;
+    struct GrappleState grapple;
     struct TFCamera camera;
     s8 jumpGraceTimer;    /* coyote time countdown                 */
     s8 jumpBufferTimer;   /* input buffer countdown                */
@@ -126,6 +174,11 @@ struct TFPlayerState {
     u8 mouseDown;         /* is left mouse button held             */
     u8 mousePressed;      /* left mouse just pressed this frame    */
     f32 lastGroundSpeed;  /* speed when last grounded              */
+    /* V2: weapon swap */
+    u8 activeWeapon;      /* 0 = L-STAR, 1 = hitscan              */
+    /* V2: perfect bhop */
+    s8 landingTimer;      /* frames since landing                  */
+    u8 bhopStreak;        /* consecutive perfect bhops             */
 };
 
 extern struct TFPlayerState gTFState;
@@ -160,6 +213,15 @@ void tf_update_wallrun(struct MarioState *m, struct WallrunState *wr, f32 dt);
 void tf_wallrun_jump(struct MarioState *m, struct WallrunState *wr);
 void tf_wallrun_detach(struct MarioState *m, struct WallrunState *wr);
 s32  tf_wall_kick(struct MarioState *m);
+
+/* Mantle */
+s32  tf_try_mantle(struct MarioState *m, struct MantleState *mt);
+void tf_update_mantle(struct MarioState *m, struct MantleState *mt);
+
+/* Grapple */
+s32  tf_try_grapple(struct MarioState *m, struct GrappleState *gr);
+void tf_update_grapple(struct MarioState *m, struct GrappleState *gr, f32 dt);
+void tf_grapple_detach(struct MarioState *m, struct GrappleState *gr);
 
 #ifdef __cplusplus
 }

@@ -19,6 +19,7 @@
 #include "game/titanfall/tf_math.h"
 #include "sounds.h"
 #include "audio/external.h"
+#include "game/titanfall/tf_hud.h"
 
 /* ── Research-calibrated constants ───────────────────────────────── */
 
@@ -267,6 +268,9 @@ void tf_wallrun_jump(struct MarioState *m, struct WallrunState *wr) {
 
     /* Wall-kick animation timer (used by tf_movement.c for SLIDEJUMP anim) */
     gTFState.wallKickTimer = 12;
+
+    /* HUD chain tracking */
+    tf_hud_wallrun_chain_increment();
 }
 
 /* ── Wall kick (not wallrunning — just touching a wall in air) ──── */

@@ -16,6 +16,9 @@
 #include "game/interaction.h"
 #include "game/titanfall/tf_movement.h"
 #include "game/titanfall/tf_math.h"
+#include "game/titanfall/tf_hud.h"
+#include "game/titanfall/tf_hitscan.h"
+#include "game/titanfall/tf_arena.h"
 #include "mario_animation_ids.h"
 #include "sounds.h"
 #include "audio/external.h"
@@ -39,6 +42,8 @@ void tf_movement_init(void) {
     sDiving = 0;
     sGroundPounding = 0;
     sGroundPoundTimer = 0;
+    tf_hud_init();
+    tf_hitscan_init();
 }
 
 static void tf_sync_vel_to_mario(struct MarioState *m) {
@@ -141,6 +146,35 @@ void tf_movement_update(struct MarioState *m) {
     /* Wall-kick animation timer */
     if (gTFState.wallKickTimer > 0) gTFState.wallKickTimer--;
 
+    /* Mantle cooldown */
+    if (gTFState.mantle.cooldown > 0) gTFState.mantle.cooldown--;
+
+    /* Grapple cooldown */
+    if (gTFState.grapple.cooldown > 0) gTFState.grapple.cooldown--;
+
+    /* ── Landing timer (for perfect bhop) ─────────────── */
+    if (justLanded) {
+        gTFState.landingTimer = 0;
+    } else if (onGround) {
+        if (gTFState.landingTimer < 127) gTFState.landingTimer++;
+    }
+
+    /* Reset bhop streak if on ground too long or stopped */
+    if (onGround && gTFState.landingTimer > TF_BHOP_GOOD_WINDOW) {
+        gTFState.bhopStreak = 0;
+    }
+    if (onGround && vec3f_magnitude_xz(m->vel) < TF_SLIDE_MIN_SPEED * 0.5f) {
+        gTFState.bhopStreak = 0;
+    }
+
+    /* Reset wallrun chain when grounded and not sliding */
+    if (onGround && !gTFState.slide.active) {
+        tf_hud_wallrun_chain_reset();
+    }
+
+    /* ── Weapon swap (scroll wheel / 1-2 keys) ────────── */
+    /* Use Z_TRIG in air as weapon swap since Z on ground = slide */
+
     /* ── Ground pound logic (in-progress) ─────────────── */
     if (sGroundPounding) {
         sGroundPoundTimer++;
@@ -198,11 +232,36 @@ void tf_movement_update(struct MarioState *m) {
     if (justLanded) {
         m->particleFlags |= PARTICLE_DUST;
 
-        if (m->input & INPUT_Z_DOWN) {
+        /* ── Perfect bhop detection ──────────────────────── */
+        s32 slideInput = (m->input & INPUT_Z_DOWN) || (m->input & INPUT_Z_PRESSED);
+        s32 jumpInput = (m->input & INPUT_A_PRESSED) || (m->input & INPUT_A_DOWN) || gTFState.jumpBufferTimer > 0;
+
+        if (slideInput && jumpInput) {
+            /* Perfect bhop — slide + jump on same frame as landing */
+            gTFState.bhopStreak++;
+            f32 bonus = TF_BHOP_SPEED_BONUS;
+            f32 streakBonus = (gTFState.bhopStreak - 1) * TF_BHOP_STREAK_BONUS;
+            if (streakBonus > TF_BHOP_MAX_STREAK_BONUS) streakBonus = TF_BHOP_MAX_STREAK_BONUS;
+            bonus += streakBonus;
+            m->vel[0] *= bonus;
+            m->vel[2] *= bonus;
+            tf_hud_notify_perfect_bhop();
+            play_sound(SOUND_GENERAL_SHORT_STAR, gGlobalSoundSource);
+
+            gTFState.jumpsAvailable = 2;
+            m->vel[1] = TF_CVAR_F("Jump.Vel", TF_JUMP_VEL) * 0.85f;
+            gTFState.jumpGraceTimer = 0;
+            gTFState.jumpBufferTimer = 0;
+            gTFState.canDoubleJump = 1;
+            m->action = ACT_FREEFALL;
+            tf_sync_vel_to_mario(m);
+            perform_air_step(m, 0);
+            goto post_movement;
+        } else if (m->input & INPUT_Z_DOWN) {
             tf_instant_slide(m);
             gTFState.canDoubleJump = 0;
             gTFState.jumpsAvailable = 2;
-        } else if ((m->input & INPUT_A_DOWN) || gTFState.jumpBufferTimer > 0) {
+        } else if (jumpInput) {
             gTFState.jumpsAvailable = 2;
             tf_do_jump(m, TF_CVAR_F("Jump.Vel", TF_JUMP_VEL) * 0.9f, 1.03f);
             m->action = ACT_FREEFALL;
@@ -220,6 +279,27 @@ void tf_movement_update(struct MarioState *m) {
 
     if (!onGround && !gTFState.slide.active) {
         /* ── AIRBORNE ──────────────────────────────────── */
+
+        /* Mantle: highest priority in air (position is manually controlled) */
+        if (gTFState.mantle.active) {
+            tf_update_mantle(m, &gTFState.mantle);
+            set_mario_animation(m, MARIO_ANIM_GENERAL_LAND);
+            tf_sync_vel_to_mario(m);
+            goto post_movement;
+        }
+
+        /* Grapple: second priority */
+        if (gTFState.grapple.active) {
+            tf_update_grapple(m, &gTFState.grapple, dt);
+            tf_sync_vel_to_mario(m);
+            perform_air_step(m, 0);
+            goto post_movement;
+        }
+
+        /* Try grapple (R button) */
+        if (m->controller->buttonPressed & R_TRIG) {
+            tf_try_grapple(m, &gTFState.grapple);
+        }
 
         /* B in air = dive attack */
         if ((m->input & INPUT_B_PRESSED) && !gTFState.wallrun.active) {
@@ -250,8 +330,15 @@ void tf_movement_update(struct MarioState *m) {
         tf_sync_vel_to_mario(m);
         perform_air_step(m, 0);
 
+        /* Try mantle AFTER air step (need wall contact) */
+        if (!gTFState.wallrun.active && !gTFState.mantle.active && m->wall != NULL) {
+            if (tf_try_mantle(m, &gTFState.mantle)) {
+                goto post_movement;
+            }
+        }
+
         /* Wallrun check AFTER air step */
-        if (!gTFState.wallrun.active && m->wall != NULL) {
+        if (!gTFState.wallrun.active && !gTFState.mantle.active && m->wall != NULL) {
             if (m->wall != gTFState.wallrun.lastWall || gTFState.wallrun.cooldown == 0) {
                 if (tf_try_wallrun_attach(m, &gTFState.wallrun)) {
                     m->particleFlags |= PARTICLE_HORIZONTAL_STAR;
@@ -349,7 +436,12 @@ post_movement:
         s16 bodyRoll = 0;
         s16 bodyPitch = 0;
 
-        if (gTFState.wallrun.active) {
+        if (gTFState.mantle.active) {
+            set_mario_animation(m, MARIO_ANIM_GENERAL_LAND);
+        } else if (gTFState.grapple.active) {
+            set_mario_animation(m, MARIO_ANIM_AIRBORNE_ON_STOMACH);
+            bodyPitch = (s16)(-20.0f / 360.0f * 65536.0f);
+        } else if (gTFState.wallrun.active) {
             /* 45° lean into wall — feet on wall, body angled */
             s16 wallTilt = (s16)(45.0f / 360.0f * 65536.0f);
             bodyRoll = (gTFState.wallrun.side == 0) ? wallTilt : -wallTilt;
@@ -416,6 +508,21 @@ post_movement:
     /* ── Camera ───────────────────────────────────────── */
     tf_camera_update(m, dt);
 
-    /* ── Weapon ───────────────────────────────────────── */
-    tf_weapon_update(m);
+    /* ── Weapon (swap: right mouse toggles) ───────────── */
+    if (gTFState.mousePressed && (m->controller->buttonPressed & R_TRIG)) {
+        /* R_TRIG is grapple — keep weapon swap for right-click */
+    }
+    if (gTFState.activeWeapon == 0) {
+        tf_weapon_update(m);     /* L-STAR projectile */
+    } else {
+        tf_hitscan_update(m);    /* Hitscan */
+    }
+
+    /* ── HUD ──────────────────────────────────────────── */
+    tf_hud_update(m);
+
+    /* ── Arena ─────────────────────────────────────────── */
+    if (gTFArena.enabled) {
+        tf_arena_update(m, dt);
+    }
 }

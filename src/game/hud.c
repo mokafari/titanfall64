@@ -15,6 +15,8 @@
 #include "print.h"
 #include "port/ui/cvar_prefixes.h"
 #include "port/interpolation/FrameInterpolation.h"
+#include "titanfall/tf_hud.h"
+#include "titanfall/tf_arena.h"
 
 /* @file hud.c
  * This file implements HUD rendering and power meter animations.
@@ -474,5 +476,9 @@ void render_hud(void) {
             FrameInterpolation_RecordCloseChild();
         }
         FrameInterpolation_RecordCloseChild();
+
+        /* Titanfall HUD overlays */
+        tf_hud_render();
+        tf_arena_render_hud();
     }
 }
