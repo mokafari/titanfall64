@@ -26,7 +26,13 @@ extern "C" {
 
 /* FOV override — sFOVState declared in camera.c */
 extern struct CameraFOVStatus sFOVState;
+
 }
+
+/* MSVC mangles struct-typed extern variables even inside extern "C" blocks.
+   Use a pointer obtained from a C helper to avoid the linkage mismatch. */
+extern "C" void *tf_get_lakitu_state_ptr(void);
+#define gLakituState (*(struct LakituState *)tf_get_lakitu_state_ptr())
 
 /* ── Mouse I/O via libultraship ─────────────────────────────────── */
 
@@ -91,8 +97,9 @@ extern "C" void tf_camera_update(struct MarioState *m, f32 dt) {
         tf_read_mouse_delta(&mouseDX, &mouseDY);
     }
 
-    cam->yaw   -= mouseDX * TF_CAM_SENSITIVITY;
-    cam->pitch -= mouseDY * TF_CAM_SENSITIVITY;
+    f32 sensitivity = TF_CVAR_F("Cam.Sensitivity", TF_CAM_SENSITIVITY);
+    cam->yaw   -= mouseDX * sensitivity;
+    cam->pitch -= mouseDY * sensitivity;
 
     /* Clamp pitch */
     if (cam->pitch > TF_CAM_PITCH_MAX) cam->pitch = TF_CAM_PITCH_MAX;
@@ -114,9 +121,10 @@ extern "C" void tf_camera_update(struct MarioState *m, f32 dt) {
 
     /* ── Focus point: Mario's head ────────────────────── */
     cam->focus[0] = m->pos[0];
-    cam->focus[1] = m->pos[1] + TF_CAM_HEIGHT;
+    cam->focus[1] = m->pos[1] + TF_CVAR_F("Cam.Height", TF_CAM_HEIGHT);
     cam->focus[2] = m->pos[2];
 
+    cam->distance = TF_CVAR_F("Cam.Distance", TF_CAM_DISTANCE);
     if (cam->distance < 1.0f) {
         /* FPS mode — camera at Mario's head */
         cam->pos[0] = cam->focus[0];
@@ -186,7 +194,7 @@ extern "C" void tf_camera_update(struct MarioState *m, f32 dt) {
     }
 
     /* Override FOV */
-    sFOVState.fov = TF_CAM_FOV;
+    sFOVState.fov = TF_CVAR_F("Cam.FOV", TF_CAM_FOV);
 
     /* ── Mouse button state (for weapon) ──────────────── */
     {

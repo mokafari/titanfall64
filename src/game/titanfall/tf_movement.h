@@ -2,10 +2,15 @@
 #define TF_MOVEMENT_H
 
 #include "types.h"
+#include "libultraship/bridge/consolevariablebridge.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* CVar helper — reads float CVar with compile-time default */
+#define TF_CVAR_F(name, def) CVarGetFloat("gTitanfall." name, def)
+#define TF_CVAR_I(name, def) CVarGetInteger("gTitanfall." name, def)
 
 /*
  * Titanfall64 — Quake/Source/Titanfall movement for SM64
@@ -49,8 +54,8 @@ extern "C" {
 #define TF_SLIDE_STEER_ACCEL   1.2f   /* lateral steering while sliding       */
 
 /* ── Wallrun ────────────────────────────────────────────────────── */
-#define TF_WR_MIN_SPEED       20.0f   /* min horizontal speed to attach       */
-#define TF_WR_MIN_HEIGHT      40.0f   /* min height above floor to attach     */
+#define TF_WR_MIN_SPEED       12.0f   /* min horizontal speed to attach       */
+#define TF_WR_MIN_HEIGHT      20.0f   /* min height above floor to attach     */
 #define TF_WR_MAX_DURATION     45     /* max frames (~1.5 sec)                */
 #define TF_WR_GRAVITY_SCALE    0.15f  /* gravity multiplier while wallrunning */
 #define TF_WR_JUMP_OFF_SPEED  52.0f   /* wall-kick horizontal velocity        */
@@ -154,6 +159,7 @@ s32  tf_try_wallrun_attach(struct MarioState *m, struct WallrunState *wr);
 void tf_update_wallrun(struct MarioState *m, struct WallrunState *wr, f32 dt);
 void tf_wallrun_jump(struct MarioState *m, struct WallrunState *wr);
 void tf_wallrun_detach(struct MarioState *m, struct WallrunState *wr);
+s32  tf_wall_kick(struct MarioState *m);
 
 #ifdef __cplusplus
 }

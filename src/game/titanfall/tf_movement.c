@@ -204,7 +204,7 @@ void tf_movement_update(struct MarioState *m) {
             gTFState.jumpsAvailable = 2;
         } else if ((m->input & INPUT_A_DOWN) || gTFState.jumpBufferTimer > 0) {
             gTFState.jumpsAvailable = 2;
-            tf_do_jump(m, TF_JUMP_VEL * 0.9f, 1.03f);
+            tf_do_jump(m, TF_CVAR_F("Jump.Vel", TF_JUMP_VEL) * 0.9f, 1.03f);
             m->action = ACT_FREEFALL;
             tf_sync_vel_to_mario(m);
             perform_air_step(m, 0);
@@ -235,11 +235,15 @@ void tf_movement_update(struct MarioState *m) {
             m->action = ACT_FREEFALL;
             tf_air_move(m, dt);
 
-            /* Double jump */
-            if ((m->input & INPUT_A_PRESSED) && gTFState.canDoubleJump) {
-                tf_do_jump(m, TF_DOUBLE_JUMP_VEL, 1.0f);
-                gTFState.canDoubleJump = 0;
-                m->particleFlags |= PARTICLE_SPARKLES;
+            if (m->input & INPUT_A_PRESSED) {
+                /* Wall kick: priority over double jump when touching a wall */
+                if (m->wall != NULL && tf_wall_kick(m)) {
+                    /* wall kick succeeded */
+                } else if (gTFState.canDoubleJump) {
+                    tf_do_jump(m, TF_CVAR_F("Jump.DoubleVel", TF_DOUBLE_JUMP_VEL), 1.0f);
+                    gTFState.canDoubleJump = 0;
+                    m->particleFlags |= PARTICLE_SPARKLES;
+                }
             }
         }
 
@@ -298,7 +302,7 @@ void tf_movement_update(struct MarioState *m) {
         /* Jump */
         if ((m->input & INPUT_A_PRESSED) || gTFState.jumpBufferTimer > 0) {
             if (gTFState.jumpGraceTimer > 0) {
-                tf_do_jump(m, TF_JUMP_VEL, 1.05f);
+                tf_do_jump(m, TF_CVAR_F("Jump.Vel", TF_JUMP_VEL), 1.05f);
                 m->action = ACT_FREEFALL;
                 tf_sync_vel_to_mario(m);
                 perform_air_step(m, 0);

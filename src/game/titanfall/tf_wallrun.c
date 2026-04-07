@@ -23,8 +23,8 @@
 /* ── Research-calibrated constants ───────────────────────────────── */
 
 /* Approach angle window: dot(velDir, -wallNormal) */
-#define WR_APPROACH_MIN     0.20f   /* cos(78°) — nearly parallel      */
-#define WR_APPROACH_MAX     0.85f   /* cos(32°) — steep approach        */
+#define WR_APPROACH_MIN     0.10f   /* cos(84°) — nearly parallel      */
+#define WR_APPROACH_MAX     0.92f   /* cos(23°) — steep approach        */
 
 /* Duration & gravity timing (in frames at 30fps) */
 #define WR_MAX_FRAMES       52      /* ~1.75s total                     */
@@ -97,10 +97,10 @@ s32 tf_try_wallrun_attach(struct MarioState *m, struct WallrunState *wr) {
     }
 
     f32 hspeed = vec3f_magnitude_xz(m->vel);
-    if (hspeed < TF_WR_MIN_SPEED) return 0;
+    if (hspeed < TF_CVAR_F("WR.MinSpeed", TF_WR_MIN_SPEED)) return 0;
 
     f32 height = m->pos[1] - m->floorHeight;
-    if (height < TF_WR_MIN_HEIGHT) return 0;
+    if (height < TF_CVAR_F("WR.MinHeight", TF_WR_MIN_HEIGHT)) return 0;
 
     /* Wall normal */
     f32 wnx = m->wall->normal.x;
@@ -114,7 +114,7 @@ s32 tf_try_wallrun_attach(struct MarioState *m, struct WallrunState *wr) {
     f32 vdx = m->vel[0] / hspeed;
     f32 vdz = m->vel[2] / hspeed;
     f32 approach = -(vdx * wnx + vdz * wnz);
-    if (approach < WR_APPROACH_MIN || approach > WR_APPROACH_MAX) return 0;
+    if (approach < TF_CVAR_F("WR.ApproachMin", WR_APPROACH_MIN) || approach > TF_CVAR_F("WR.ApproachMax", WR_APPROACH_MAX)) return 0;
 
     /* Side detection */
     f32 crossY = vdx * wnz - vdz * wnx;
@@ -144,7 +144,7 @@ s32 tf_try_wallrun_attach(struct MarioState *m, struct WallrunState *wr) {
     /* Snap velocity to wall direction + upward bump */
     m->vel[0] = rdx * wr->entrySpeed;
     m->vel[2] = rdz * wr->entrySpeed;
-    m->vel[1] = TF_WR_ENTRY_UPKICK;
+    m->vel[1] = TF_CVAR_F("WR.EntryUpkick", TF_WR_ENTRY_UPKICK);
 
     play_sound(SOUND_ACTION_TERRAIN_LANDING, m->marioObj->header.gfx.cameraToObject);
     return 1;
@@ -156,7 +156,7 @@ void tf_update_wallrun(struct MarioState *m, struct WallrunState *wr, f32 dt) {
     wr->timer++;
     (void)dt;
 
-    if (wr->timer > WR_MAX_FRAMES) {
+    if (wr->timer > TF_CVAR_I("WR.MaxFrames", WR_MAX_FRAMES)) {
         tf_wallrun_detach(m, wr);
         return;
     }
@@ -223,7 +223,8 @@ void tf_update_wallrun(struct MarioState *m, struct WallrunState *wr, f32 dt) {
 
     /* ── Camera ───────────────────────────────────────── */
     /* Camera leans toward the wall: side 0 = wall on left → lean left (try both signs) */
-    gTFState.camera.targetRoll = (wr->side == 0) ? WR_CAM_ROLL : -WR_CAM_ROLL;
+    f32 camRoll = TF_CVAR_F("Cam.WallrunRoll", WR_CAM_ROLL);
+    gTFState.camera.targetRoll = (wr->side == 0) ? camRoll : -camRoll;
 }
 
 /* ── Wall-kick: TF2 additive formula ────────────────────────────── */
@@ -239,18 +240,21 @@ void tf_wallrun_jump(struct MarioState *m, struct WallrunState *wr) {
      * Total speed gets an 8% bonus to reward chains.
      */
     f32 currentSpeed = wr->entrySpeed * powf(WR_SPEED_DECAY, (f32)wr->timer);
-    f32 preservedSpeed = currentSpeed * WR_KICK_PRESERVE;
+    f32 preservedSpeed = currentSpeed * TF_CVAR_F("WR.KickPreserve", WR_KICK_PRESERVE);
+    f32 kickNormal = TF_CVAR_F("WR.KickNormal", WR_KICK_NORMAL);
+    f32 kickUp = TF_CVAR_F("WR.KickUp", WR_KICK_UP);
+    f32 kickBonus = TF_CVAR_F("WR.KickBonus", WR_KICK_BONUS);
 
     /* Build kick velocity: additive components */
-    m->vel[0] = wr->wallNormal[0] * WR_KICK_NORMAL
+    m->vel[0] = wr->wallNormal[0] * kickNormal
               + wr->runDir[0] * preservedSpeed;
-    m->vel[2] = wr->wallNormal[2] * WR_KICK_NORMAL
+    m->vel[2] = wr->wallNormal[2] * kickNormal
               + wr->runDir[2] * preservedSpeed;
-    m->vel[1] = WR_KICK_UP;
+    m->vel[1] = kickUp;
 
     /* Apply chain speed bonus */
-    m->vel[0] *= WR_KICK_BONUS;
-    m->vel[2] *= WR_KICK_BONUS;
+    m->vel[0] *= kickBonus;
+    m->vel[2] *= kickBonus;
 
     wr->active = 0;
     wr->cooldown = WR_SAME_WALL_CD;
@@ -263,6 +267,47 @@ void tf_wallrun_jump(struct MarioState *m, struct WallrunState *wr) {
 
     /* Wall-kick animation timer (used by tf_movement.c for SLIDEJUMP anim) */
     gTFState.wallKickTimer = 12;
+}
+
+/* ── Wall kick (not wallrunning — just touching a wall in air) ──── */
+
+s32 tf_wall_kick(struct MarioState *m) {
+    if (m->wall == NULL) return 0;
+
+    f32 wnx = m->wall->normal.x;
+    f32 wnz = m->wall->normal.z;
+    f32 wnLen = sqrtf(wnx * wnx + wnz * wnz);
+    if (wnLen < 0.01f) return 0;
+    wnx /= wnLen;
+    wnz /= wnLen;
+
+    f32 hspeed = vec3f_magnitude_xz(m->vel);
+    f32 keepSpeed = tf_fmaxf(hspeed * 0.5f, 15.0f);
+
+    /* Bounce off wall normal + keep some forward momentum */
+    f32 vdx = (hspeed > 1.0f) ? m->vel[0] / hspeed : 0.0f;
+    f32 vdz = (hspeed > 1.0f) ? m->vel[2] / hspeed : 0.0f;
+
+    /* Project velocity onto wall plane for run direction */
+    f32 dot = vdx * wnx + vdz * wnz;
+    f32 rdx = vdx - dot * wnx;
+    f32 rdz = vdz - dot * wnz;
+    f32 rdLen = sqrtf(rdx * rdx + rdz * rdz);
+    if (rdLen > 0.01f) { rdx /= rdLen; rdz /= rdLen; }
+
+    f32 wkNormal = TF_CVAR_F("WK.Normal", 30.0f);
+    f32 wkUp = TF_CVAR_F("WK.Up", 45.0f);
+    m->vel[0] = wnx * wkNormal + rdx * keepSpeed;
+    m->vel[2] = wnz * wkNormal + rdz * keepSpeed;
+    m->vel[1] = wkUp;
+
+    m->action = ACT_FREEFALL;
+    gTFState.canDoubleJump = 1;
+    gTFState.wallKickTimer = 12;
+
+    m->particleFlags |= PARTICLE_HORIZONTAL_STAR;
+    play_sound(SOUND_ACTION_TERRAIN_JUMP, m->marioObj->header.gfx.cameraToObject);
+    return 1;
 }
 
 /* ── Detach ─────────────────────────────────────────────────────── */

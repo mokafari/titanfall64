@@ -16,7 +16,7 @@ s32 tf_try_slide_enter(struct MarioState *m, struct SlideState *sl) {
     if (!(m->input & INPUT_Z_PRESSED)) return 0;
 
     f32 hspeed = vec3f_magnitude_xz(m->vel);
-    if (hspeed < TF_SLIDE_MIN_SPEED) return 0;
+    if (hspeed < TF_CVAR_F("Slide.MinSpeed", TF_SLIDE_MIN_SPEED)) return 0;
 
     sl->active = 1;
     sl->timer = 0;
@@ -36,8 +36,9 @@ s32 tf_try_slide_enter(struct MarioState *m, struct SlideState *sl) {
     /* Entry boost */
     f32 velLen = vec3f_magnitude_xz(m->vel);
     if (velLen > 0.01f) {
-        m->vel[0] += (m->vel[0] / velLen) * TF_SLIDE_BOOST;
-        m->vel[2] += (m->vel[2] / velLen) * TF_SLIDE_BOOST;
+        f32 slideBoost = TF_CVAR_F("Slide.Boost", TF_SLIDE_BOOST);
+        m->vel[0] += (m->vel[0] / velLen) * slideBoost;
+        m->vel[2] += (m->vel[2] / velLen) * slideBoost;
     }
 
     return 1;
@@ -73,7 +74,7 @@ void tf_update_slide(struct MarioState *m, struct SlideState *sl, f32 dt) {
 
     /* Friction ramps up over time — snappy start, decelerating tail */
     if (hspeed > 0.1f) {
-        f32 friction = TF_SLIDE_FRICTION;
+        f32 friction = TF_CVAR_F("Slide.Friction", TF_SLIDE_FRICTION);
         if (sl->timer > 30) {
             /* After 1 second, friction ramps from 0.3 → 3.0 over the next second */
             f32 t = (f32)(sl->timer - 30) / 30.0f;
@@ -150,9 +151,10 @@ void tf_update_slide(struct MarioState *m, struct SlideState *sl, f32 dt) {
 }
 
 void tf_slide_jump(struct MarioState *m, struct SlideState *sl) {
-    m->vel[0] *= TF_SLIDE_JUMP_BOOST;
-    m->vel[2] *= TF_SLIDE_JUMP_BOOST;
-    m->vel[1] = TF_JUMP_VEL * 0.85f;
+    f32 sjBoost = TF_CVAR_F("Slide.JumpBoost", TF_SLIDE_JUMP_BOOST);
+    m->vel[0] *= sjBoost;
+    m->vel[2] *= sjBoost;
+    m->vel[1] = TF_CVAR_F("Jump.Vel", TF_JUMP_VEL) * 0.85f;
     sl->active = 0;
     sl->timer = 0;
     gTFState.canDoubleJump = 1;

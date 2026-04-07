@@ -22,7 +22,7 @@ void tf_ground_move(struct MarioState *m, f32 dt) {
      * So friction never applies → speed is preserved.
      */
     if (speed > 0.1f) {
-        f32 drop = speed * TF_GROUND_FRICTION * dt;
+        f32 drop = speed * TF_CVAR_F("Ground.Friction", TF_GROUND_FRICTION) * dt;
         f32 newspeed = speed - drop;
         if (newspeed < 0.0f) newspeed = 0.0f;
         f32 scale = newspeed / speed;
@@ -45,7 +45,7 @@ void tf_ground_move(struct MarioState *m, f32 dt) {
         return;
     }
 
-    f32 accelSpeed = TF_GROUND_ACCEL * wishspeed * dt;
+    f32 accelSpeed = TF_CVAR_F("Ground.Accel", TF_GROUND_ACCEL) * wishspeed * dt;
     if (accelSpeed > addSpeed) {
         accelSpeed = addSpeed;
     }

@@ -17,8 +17,8 @@
 
 static void tf_air_accelerate(struct MarioState *m, Vec3f wishdir, f32 wishspeed, f32 dt) {
     f32 cappedSpeed = wishspeed;
-    if (cappedSpeed > TF_AIR_CAP) {
-        cappedSpeed = TF_AIR_CAP;
+    if (cappedSpeed > TF_CVAR_F("Air.Cap", TF_AIR_CAP)) {
+        cappedSpeed = TF_CVAR_F("Air.Cap", TF_AIR_CAP);
     }
 
     f32 currentSpeed = m->vel[0] * wishdir[0] + m->vel[2] * wishdir[2];
@@ -27,7 +27,7 @@ static void tf_air_accelerate(struct MarioState *m, Vec3f wishdir, f32 wishspeed
         return;
     }
 
-    f32 accelSpeed = TF_AIR_ACCEL * wishspeed * dt;
+    f32 accelSpeed = TF_CVAR_F("Air.Accel", TF_AIR_ACCEL) * wishspeed * dt;
     if (accelSpeed > addSpeed) {
         accelSpeed = addSpeed;
     }

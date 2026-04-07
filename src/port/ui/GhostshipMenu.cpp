@@ -123,6 +123,7 @@ void GhostshipMenu::InitElement() {
     Ship::Menu::InitElement();
     AddMenuSettings();
     AddMenuEnhancements();
+    AddMenuTitanfall();
     AddMenuRando();
     AddMenuAchievements();
     AddMenuDevTools();
