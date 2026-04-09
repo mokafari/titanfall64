@@ -124,6 +124,9 @@ void tf_movement_update(struct MarioState *m) {
     if (m == NULL || m->marioObj == NULL || m->controller == NULL) return;
     if (m->floor == NULL) return;
 
+    /* ── Camera FIRST so mouse input affects this frame's wishdir ── */
+    tf_camera_update(m, dt);
+
     /* ── Grounded check ──────────────────────────────────── */
     s32 onGround = (m->pos[1] <= m->floorHeight + 4.0f) && (m->vel[1] <= 0.0f);
     u8 justLanded = sWasAirborne && onGround && !gTFState.slide.active;
@@ -417,10 +420,19 @@ post_movement:
     /* ── Track state ──────────────────────────────────── */
     sWasAirborne = !onGround && !gTFState.slide.active;
 
-    /* ── Face camera direction ────────────────────────── */
+    /* ── Face direction ───────────────────────────────── */
+    /* Moving: face movement direction. Stationary: face camera direction.
+     * This prevents the "ice skating" look where Mario runs sideways. */
     {
-        s16 camYawS16 = (s16)(gTFState.camera.yaw / 360.0f * 65536.0f);
-        m->faceAngle[1] = camYawS16;
+        f32 hspeed = vec3f_magnitude_xz(m->vel);
+        if (hspeed > 3.0f) {
+            /* Face movement direction */
+            m->faceAngle[1] = atan2s(m->vel[2], m->vel[0]);
+        } else {
+            /* Stationary: face camera */
+            s16 camYawS16 = (s16)(gTFState.camera.yaw / 360.0f * 65536.0f);
+            m->faceAngle[1] = camYawS16;
+        }
     }
 
     /* ── Sync graphics ────────────────────────────────── */
@@ -504,9 +516,6 @@ post_movement:
             m->particleFlags |= PARTICLE_WAVE_TRAIL;
         }
     }
-
-    /* ── Camera ───────────────────────────────────────── */
-    tf_camera_update(m, dt);
 
     /* ── Weapon (swap: right mouse toggles) ───────────── */
     if (gTFState.mousePressed && (m->controller->buttonPressed & R_TRIG)) {

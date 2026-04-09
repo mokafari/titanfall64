@@ -71,5 +71,5 @@ void get_wishdir(struct MarioState *m, Vec3f wishdir, f32 *wishspeed) {
         wishdir[2] /= len;
     }
 
-    *wishspeed = normalizedMag * TF_GROUND_MAXSPEED;
+    *wishspeed = normalizedMag * TF_CVAR_F("Ground.MaxSpeed", TF_GROUND_MAXSPEED);
 }

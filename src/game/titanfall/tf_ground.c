@@ -36,6 +36,16 @@ void tf_ground_move(struct MarioState *m, f32 dt) {
     get_wishdir(m, wishdir, &wishspeed);
 
     if (wishspeed < 0.01f) {
+        /* No input: apply extra stopping friction so Mario doesn't slide */
+        speed = vec3f_magnitude_xz(m->vel);
+        if (speed > 0.1f) {
+            f32 stopDrop = speed * 12.0f * dt;  /* 2x normal friction for stopping */
+            f32 newspeed = speed - stopDrop;
+            if (newspeed < 1.0f) newspeed = 0.0f;
+            f32 scale = newspeed / speed;
+            m->vel[0] *= scale;
+            m->vel[2] *= scale;
+        }
         return;
     }
 

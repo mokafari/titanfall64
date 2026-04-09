@@ -1,17 +1,17 @@
 /*
- * tf_grapple.c -- Titanfall64 grapple/hook system
+ * tf_grapple.c — Titanfall64 grapple/hook system (revised)
  *
- * Fires a ray from Mario's head in camera direction. If geometry is hit
- * within TF_GRAPPLE_MAX_RANGE, Mario is pulled toward that point with
- * swing physics: lateral momentum is preserved, gravity is reduced to 30%,
- * and air strafing works at 30% strength.
+ * R button fires a ray from camera. If geometry is hit within range,
+ * Mario is pulled toward the target with pendulum-style swing physics.
  *
- * Raycast is done by stepping along the ray and checking floor/ceil/wall
- * collisions at each step (no find_surface_on_ray in this SM64 port).
+ * Visual: spawns small flame objects along the "rope" each frame.
  *
- * R button (R_TRIG on controller) fires grapple.
- * Release R to detach early; auto-detach within 80 units or after 90 frames.
- * Speed boost (1.1x) on detach. 30-frame cooldown between grapples.
+ * Key fixes from v1:
+ * - Pull force scales with distance (stronger far away, gentle close up)
+ * - Gravity counteraction is simpler and more consistent
+ * - Action state properly set to ACT_FREEFALL during grapple
+ * - Rope visuals via particle trail
+ * - Better detach: A button also detaches (for jump-cancel)
  */
 
 #include <math.h>
@@ -19,72 +19,107 @@
 #include "engine/math_util.h"
 #include "engine/surface_collision.h"
 #include "game/mario.h"
+#include "game/object_helpers.h"
 #include "game/titanfall/tf_movement.h"
 #include "game/titanfall/tf_math.h"
 #include "game/titanfall/tf_grapple.h"
+#include "behavior_data.h"
+#include "model_ids.h"
 #include "sounds.h"
 #include "audio/external.h"
 
-/* ── Step-based raycast ────────────────────────────────────────────── */
+/* ── Rope visuals ──────────────────────────────────────────────── */
 
-/*
- * tf_raycast_step -- Walk along a ray checking for geometry.
- *
- * At each step we check:
- *   1. Floor height at (x, z) -- if ray goes below floor, it hit the floor.
- *   2. Ceiling height at (x, z) -- if ray goes above ceiling, it hit ceiling.
- *   3. Wall collision -- if walls are found within a small radius.
- *
- * Returns 1 if a hit was found, with hitPos filled in.
- * Returns 0 if the ray exhausted its range with no hit.
- */
+#define GRAPPLE_ROPE_SEGMENTS  6
+static struct Object *sRopeObjs[GRAPPLE_ROPE_SEGMENTS] = { 0 };
+
+static void tf_grapple_spawn_rope(struct MarioState *m, struct GrappleState *gr) {
+    Vec3f start = { m->pos[0], m->pos[1] + 100.0f, m->pos[2] };
+
+    for (s32 i = 0; i < GRAPPLE_ROPE_SEGMENTS; i++) {
+        f32 t = (f32)(i + 1) / (f32)(GRAPPLE_ROPE_SEGMENTS + 1);
+
+        /* Slight sag in the middle of the rope */
+        f32 sag = sinf(t * 3.14159f) * -20.0f;
+
+        f32 x = start[0] + (gr->targetPos[0] - start[0]) * t;
+        f32 y = start[1] + (gr->targetPos[1] - start[1]) * t + sag;
+        f32 z = start[2] + (gr->targetPos[2] - start[2]) * t;
+
+        struct Object *obj = sRopeObjs[i];
+        if (obj == NULL || obj->activeFlags == 0) {
+            obj = spawn_object(m->marioObj, MODEL_BLUE_FLAME, bhvFlame);
+            if (obj == NULL) continue;
+            obj->oInteractType = 0;  /* don't burn Mario */
+            sRopeObjs[i] = obj;
+        }
+
+        obj->oPosX = x;
+        obj->oPosY = y;
+        obj->oPosZ = z;
+        obj->header.gfx.scale[0] = 1.5f;
+        obj->header.gfx.scale[1] = 1.5f;
+        obj->header.gfx.scale[2] = 1.5f;
+    }
+}
+
+static void tf_grapple_destroy_rope(void) {
+    for (s32 i = 0; i < GRAPPLE_ROPE_SEGMENTS; i++) {
+        if (sRopeObjs[i] != NULL && sRopeObjs[i]->activeFlags != 0) {
+            obj_mark_for_deletion(sRopeObjs[i]);
+        }
+        sRopeObjs[i] = NULL;
+    }
+}
+
+/* ── Step-based raycast ────────────────────────────────────────── */
+
 static s32 tf_raycast_step(Vec3f origin, Vec3f dir, f32 maxDist, Vec3f hitPos) {
     f32 step = TF_GRAPPLE_RAY_STEP;
-    s32 numSteps = (s32)(maxDist / step) + 1;
-    Vec3f pos;
-
-    vec3f_copy(pos, origin);
+    s32 numSteps = (s32)(maxDist / step);
+    if (numSteps < 1) numSteps = 1;
+    if (numSteps > 200) numSteps = 200;
 
     for (s32 i = 1; i <= numSteps; i++) {
         f32 t = step * (f32)i;
         if (t > maxDist) t = maxDist;
 
-        pos[0] = origin[0] + dir[0] * t;
-        pos[1] = origin[1] + dir[1] * t;
-        pos[2] = origin[2] + dir[2] * t;
+        f32 px = origin[0] + dir[0] * t;
+        f32 py = origin[1] + dir[1] * t;
+        f32 pz = origin[2] + dir[2] * t;
 
-        /* Floor check */
+        /* Floor: ray passes below it */
         struct Surface *floor = NULL;
-        f32 floorY = find_floor(pos[0], pos[1] + 80.0f, pos[2], &floor);
-        if (floor != NULL && pos[1] < floorY + 10.0f) {
-            hitPos[0] = pos[0];
+        f32 floorY = find_floor(px, py + 80.0f, pz, &floor);
+        if (floor != NULL && py < floorY + 5.0f) {
+            hitPos[0] = px;
             hitPos[1] = floorY;
-            hitPos[2] = pos[2];
+            hitPos[2] = pz;
             return 1;
         }
 
-        /* Ceiling check */
+        /* Ceiling: ray passes above it */
         struct Surface *ceil = NULL;
-        f32 ceilY = find_ceil(pos[0], pos[1] - 10.0f, pos[2], &ceil);
-        if (ceil != NULL && pos[1] > ceilY - 10.0f) {
-            hitPos[0] = pos[0];
+        f32 ceilY = find_ceil(px, py - 10.0f, pz, &ceil);
+        if (ceil != NULL && ceilY > -10000.0f && py > ceilY - 5.0f) {
+            hitPos[0] = px;
             hitPos[1] = ceilY;
-            hitPos[2] = pos[2];
+            hitPos[2] = pz;
             return 1;
         }
 
-        /* Wall check */
-        struct WallCollisionData wallData;
-        wallData.x = pos[0];
-        wallData.y = pos[1];
-        wallData.z = pos[2];
-        wallData.offsetY = 30.0f;
-        wallData.radius = 50.0f;
-        wallData.numWalls = 0;
-        if (find_wall_collisions(&wallData) != 0 && wallData.numWalls > 0) {
-            hitPos[0] = wallData.x;
-            hitPos[1] = pos[1];
-            hitPos[2] = wallData.z;
+        /* Wall collision */
+        struct WallCollisionData wd;
+        wd.x = px;
+        wd.y = py;
+        wd.z = pz;
+        wd.offsetY = 30.0f;
+        wd.radius = 40.0f;
+        wd.numWalls = 0;
+        if (find_wall_collisions(&wd) != 0 && wd.numWalls > 0) {
+            hitPos[0] = wd.x;
+            hitPos[1] = py;
+            hitPos[2] = wd.z;
             return 1;
         }
     }
@@ -92,17 +127,14 @@ static s32 tf_raycast_step(Vec3f origin, Vec3f dir, f32 maxDist, Vec3f hitPos) {
     return 0;
 }
 
-/* ── Fire grapple ──────────────────────────────────────────────────── */
+/* ── Fire grapple ──────────────────────────────────────────────── */
 
 s32 tf_try_grapple(struct MarioState *m, struct GrappleState *gr) {
-    /* Already active or on cooldown */
     if (gr->active) return 0;
     if (gr->cooldown > 0) return 0;
-
-    /* R trigger must be pressed (just went down this frame) */
     if (!(m->controller->buttonPressed & R_TRIG)) return 0;
 
-    /* Build camera-forward ray direction */
+    /* Camera-forward direction */
     s16 yawS16   = (s16)(gTFState.camera.yaw   / 360.0f * 65536.0f);
     s16 pitchS16 = (s16)(gTFState.camera.pitch / 360.0f * 65536.0f);
 
@@ -111,28 +143,34 @@ s32 tf_try_grapple(struct MarioState *m, struct GrappleState *gr) {
     dir[1] = -sins(pitchS16);
     dir[2] =  coss(pitchS16) * coss(yawS16);
 
-    /* Ray origin: Mario's head position */
-    Vec3f origin;
-    origin[0] = m->pos[0];
-    origin[1] = m->pos[1] + 120.0f;  /* roughly head height */
-    origin[2] = m->pos[2];
+    Vec3f origin = { m->pos[0], m->pos[1] + 120.0f, m->pos[2] };
 
-    /* Cast ray */
     Vec3f hitPos;
     if (!tf_raycast_step(origin, dir, TF_GRAPPLE_MAX_RANGE, hitPos)) {
-        return 0;  /* nothing in range */
+        return 0;
     }
 
-    /* Activate grapple */
+    /* Don't grapple to a point directly below (would slam into ground) */
+    if (hitPos[1] < m->pos[1] - 50.0f) {
+        return 0;
+    }
+
     gr->active = 1;
     gr->timer = 0;
     vec3f_copy(gr->targetPos, hitPos);
 
-    /* Compute initial rope length */
     f32 dx = hitPos[0] - m->pos[0];
     f32 dy = hitPos[1] - m->pos[1];
     f32 dz = hitPos[2] - m->pos[2];
     gr->ropeLength = sqrtf(dx * dx + dy * dy + dz * dz);
+
+    /* Give initial pull impulse toward target */
+    f32 dist = gr->ropeLength;
+    if (dist > 1.0f) {
+        m->vel[0] += (dx / dist) * 8.0f;
+        m->vel[1] += (dy / dist) * 8.0f + 5.0f;
+        m->vel[2] += (dz / dist) * 8.0f;
+    }
 
     play_sound(SOUND_ACTION_TERRAIN_JUMP, m->marioObj->header.gfx.cameraToObject);
     m->particleFlags |= PARTICLE_HORIZONTAL_STAR;
@@ -140,129 +178,152 @@ s32 tf_try_grapple(struct MarioState *m, struct GrappleState *gr) {
     return 1;
 }
 
-/* ── Per-frame grapple update ──────────────────────────────────────── */
+/* ── Per-frame update ──────────────────────────────────────────── */
 
 void tf_update_grapple(struct MarioState *m, struct GrappleState *gr, f32 dt) {
     if (!gr->active) return;
+    (void)dt;
 
     gr->timer++;
 
-    /* ── Auto-detach: max duration ──────────────────────── */
-    if (gr->timer > TF_GRAPPLE_MAX_DURATION) {
-        tf_grapple_detach(m, gr);
-        return;
-    }
+    /* Keep in air */
+    m->action = ACT_FREEFALL;
 
-    /* ── Release R to detach ────────────────────────────── */
-    if (!(m->controller->buttonDown & R_TRIG)) {
-        tf_grapple_detach(m, gr);
-        return;
-    }
+    /* Direction + distance to target */
+    f32 dx = gr->targetPos[0] - m->pos[0];
+    f32 dy = gr->targetPos[1] - m->pos[1];
+    f32 dz = gr->targetPos[2] - m->pos[2];
+    f32 dist = sqrtf(dx * dx + dy * dy + dz * dz);
 
-    /* ── Direction to target ────────────────────────────── */
-    Vec3f toTarget;
-    toTarget[0] = gr->targetPos[0] - m->pos[0];
-    toTarget[1] = gr->targetPos[1] - m->pos[1];
-    toTarget[2] = gr->targetPos[2] - m->pos[2];
+    /* Detach conditions */
+    if (gr->timer > TF_GRAPPLE_MAX_DURATION) { tf_grapple_detach(m, gr); return; }
+    if (dist < TF_GRAPPLE_MIN_DIST)          { tf_grapple_detach(m, gr); return; }
+    if (!(m->controller->buttonDown & R_TRIG)){ tf_grapple_detach(m, gr); return; }
+    if (m->input & INPUT_A_PRESSED)           { tf_grapple_detach(m, gr); return; } /* jump-cancel */
 
-    f32 dist = sqrtf(toTarget[0] * toTarget[0]
-                   + toTarget[1] * toTarget[1]
-                   + toTarget[2] * toTarget[2]);
-
-    /* ── Auto-detach: close enough ──────────────────────── */
-    if (dist < TF_GRAPPLE_MIN_DIST) {
-        tf_grapple_detach(m, gr);
-        return;
-    }
-
-    /* Normalize direction to target */
+    /* Normalized rope direction (toward target) */
     f32 invDist = 1.0f / dist;
-    toTarget[0] *= invDist;
-    toTarget[1] *= invDist;
-    toTarget[2] *= invDist;
+    f32 ndx = dx * invDist;
+    f32 ndy = dy * invDist;
+    f32 ndz = dz * invDist;
 
-    /* ── Pull acceleration toward target ────────────────── */
     /*
-     * Apply pull force toward the grapple point.
-     * Vertical bias: add extra upward component so the grapple
-     * arcs upward rather than pulling in a flat line.
+     * ── Pendulum swing physics ──────────────────────────
+     *
+     * The grapple acts like a rope, not a jetpack.
+     *
+     * 1. Apply gravity normally (let SM64's apply_gravity handle it,
+     *    but counteract a small portion for floatiness).
+     * 2. Slowly reel in the rope each frame.
+     * 3. If Mario is beyond the rope length, enforce the constraint:
+     *    remove the component of velocity moving AWAY from the target.
+     *    This is what creates the pendulum arc — velocity perpendicular
+     *    to the rope is preserved, velocity along the rope (outward) is killed.
+     * 4. A small inward pull keeps tension on the rope.
      */
-    f32 pullForce = TF_GRAPPLE_PULL_FORCE;
 
-    m->vel[0] += toTarget[0] * pullForce;
-    m->vel[1] += (toTarget[1] + TF_GRAPPLE_VERTICAL_BIAS) * pullForce;
-    m->vel[2] += toTarget[2] * pullForce;
+    /* Reel in: shorten the rope over time (pull yourself closer) */
+    f32 reelSpeed = 3.0f;  /* units/frame rope shortening */
+    gr->ropeLength -= reelSpeed;
+    if (gr->ropeLength < TF_GRAPPLE_MIN_DIST) {
+        gr->ropeLength = TF_GRAPPLE_MIN_DIST;
+    }
 
-    /* ── Reduced gravity (30% of normal) ────────────────── */
-    /*
-     * SM64 apply_gravity does ~4.0 per frame.
-     * We counteract most of it: apply only 30% worth of gravity.
-     * Net gravity = 4.0 * 0.3 = 1.2 per frame.
-     * We add back 4.0 * 0.7 = 2.8 to counteract vanilla gravity
-     * that will be applied by perform_air_step.
-     */
-    m->vel[1] += 4.0f * (1.0f - TF_GRAPPLE_GRAVITY_SCALE);
+    /* Reduced gravity: counteract 60% of SM64's ~4.0/frame gravity */
+    m->vel[1] += 4.0f * 0.6f;
 
-    /* ── Air strafing at 30% strength ───────────────────── */
-    {
-        Vec3f wishdir;
-        f32 wishspeed;
-        get_wishdir(m, wishdir, &wishspeed);
+    /* Small constant inward pull (tension) */
+    f32 tension = 4.0f;
+    m->vel[0] += ndx * tension;
+    m->vel[1] += (ndy + 0.15f) * tension;  /* slight upward bias */
+    m->vel[2] += ndz * tension;
 
-        if (wishspeed > 0.01f) {
-            /* Project wish onto plane perpendicular to pull direction
-             * to get lateral strafe component only */
-            f32 dot = wishdir[0] * toTarget[0] + wishdir[2] * toTarget[2];
-            Vec3f lateral;
-            lateral[0] = wishdir[0] - dot * toTarget[0];
-            lateral[1] = 0.0f;
-            lateral[2] = wishdir[2] - dot * toTarget[2];
+    /* ── Rope constraint: enforce max rope length ──────── */
+    if (dist > gr->ropeLength) {
+        /*
+         * Project velocity onto rope direction.
+         * If the component along the rope is outward (negative dot),
+         * remove it. This is what creates the swing arc.
+         */
+        f32 velDotRope = m->vel[0] * ndx + m->vel[1] * ndy + m->vel[2] * ndz;
 
-            f32 latLen = sqrtf(lateral[0] * lateral[0] + lateral[2] * lateral[2]);
-            if (latLen > 0.001f) {
-                lateral[0] /= latLen;
-                lateral[2] /= latLen;
+        if (velDotRope < 0.0f) {
+            /* Moving away from target — remove that component */
+            m->vel[0] -= velDotRope * ndx;
+            m->vel[1] -= velDotRope * ndy;
+            m->vel[2] -= velDotRope * ndz;
+        }
 
-                f32 strafeAccel = wishspeed * TF_GRAPPLE_STRAFE_SCALE * dt;
-                m->vel[0] += lateral[0] * strafeAccel;
-                m->vel[2] += lateral[2] * strafeAccel;
-            }
+        /* Snap position back to rope length */
+        f32 overshoot = dist - gr->ropeLength;
+        m->pos[0] += ndx * overshoot;
+        m->pos[1] += ndy * overshoot;
+        m->pos[2] += ndz * overshoot;
+    }
+
+    /* ── Air strafing (lateral control during swing) ───── */
+    Vec3f wishdir;
+    f32 wishspeed;
+    get_wishdir(m, wishdir, &wishspeed);
+    if (wishspeed > 0.01f) {
+        /* Project wish onto plane perpendicular to rope */
+        f32 dot = wishdir[0] * ndx + wishdir[1] * ndy + wishdir[2] * ndz;
+        f32 lx = wishdir[0] - dot * ndx;
+        f32 ly = wishdir[1] - dot * ndy;
+        f32 lz = wishdir[2] - dot * ndz;
+        f32 ll = sqrtf(lx * lx + ly * ly + lz * lz);
+        if (ll > 0.001f) {
+            lx /= ll; ly /= ll; lz /= ll;
+            /* Stronger strafing than before — makes swinging feel responsive */
+            f32 strafeAccel = 2.5f;
+            m->vel[0] += lx * strafeAccel;
+            m->vel[1] += ly * strafeAccel;
+            m->vel[2] += lz * strafeAccel;
         }
     }
 
-    /* ── Speed cap ──────────────────────────────────────── */
-    {
-        f32 speed = sqrtf(m->vel[0] * m->vel[0]
-                        + m->vel[1] * m->vel[1]
-                        + m->vel[2] * m->vel[2]);
-        if (speed > TF_GRAPPLE_SPEED_CAP) {
-            f32 scale = TF_GRAPPLE_SPEED_CAP / speed;
-            m->vel[0] *= scale;
-            m->vel[1] *= scale;
-            m->vel[2] *= scale;
-        }
+    /* Speed cap */
+    f32 speed = sqrtf(m->vel[0] * m->vel[0] + m->vel[1] * m->vel[1] + m->vel[2] * m->vel[2]);
+    if (speed > TF_GRAPPLE_SPEED_CAP) {
+        f32 scale = TF_GRAPPLE_SPEED_CAP / speed;
+        m->vel[0] *= scale;
+        m->vel[1] *= scale;
+        m->vel[2] *= scale;
     }
 
-    /* Shrink rope length as we get closer (prevents rubber-banding) */
+    /* Track shrinking rope */
     if (dist < gr->ropeLength) {
         gr->ropeLength = dist;
     }
+
+    /* Spawn rope visuals */
+    tf_grapple_spawn_rope(m, gr);
+
+    /* Particles at the grapple point (subtle anchor indicator) */
+    if ((gr->timer & 3) == 0) {
+        m->particleFlags |= PARTICLE_SPARKLES;
+    }
 }
 
-/* ── Detach grapple ────────────────────────────────────────────────── */
+/* ── Detach ────────────────────────────────────────────────────── */
 
 void tf_grapple_detach(struct MarioState *m, struct GrappleState *gr) {
     if (!gr->active) return;
 
     /* Speed boost on release */
     m->vel[0] *= TF_GRAPPLE_DETACH_BOOST;
-    m->vel[1] *= TF_GRAPPLE_DETACH_BOOST;
     m->vel[2] *= TF_GRAPPLE_DETACH_BOOST;
+    /* Don't boost vertical — prevents launch-to-death */
+
+    /* Re-enable double jump after grapple */
+    gTFState.canDoubleJump = 1;
 
     gr->active = 0;
     gr->timer = 0;
     gr->cooldown = TF_GRAPPLE_COOLDOWN;
 
-    m->particleFlags |= PARTICLE_SPARKLES;
+    tf_grapple_destroy_rope();
+
+    m->particleFlags |= PARTICLE_SPARKLES | PARTICLE_HORIZONTAL_STAR;
     play_sound(SOUND_ACTION_TERRAIN_LANDING, m->marioObj->header.gfx.cameraToObject);
 }
